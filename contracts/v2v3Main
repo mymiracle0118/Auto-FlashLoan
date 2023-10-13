@@ -1,0 +1,349 @@
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity 0.8.10;
+
+import "@aave/core-v3/contracts/interfaces/IPool.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
+import "hardhat/console.sol";
+
+import { ILendingPool, ILendingPoolAddressesProvider, IERC20 } from "./Interfaces.sol";
+import { SafeMath } from "./Libraries.sol";
+
+contract Flashloan is Ownable{
+    using SafeMath for uint256;
+    
+    IPool Pool;
+    address PoolAddress;
+    IPoolAddressesProvider public immutable i_PoolAddressProvider;
+
+    ILendingPool LendingPool;
+    address LendingPoolAddress;
+    ILendingPoolAddressesProvider public immutable i_LendingPoolAddressProvider;
+
+    // address msg.sender;
+
+    address assetAddress;
+    address amAssetAddress;
+    address aPolAssetAddress;
+
+    // address assetAddressV3DAI = 0x9A753f0F7886C9fbF63cF59D0D4423C5eFaCE95B;
+    // address amAssetAddressV3DAI = 0x639cB7b21ee2161DF9c882483C9D55c90c20Ca3e;
+    // address aPolAssetAddressV3DAI = 0xDD4f3Ee61466C4158D394d57f3D4C397E91fBc51;
+
+
+    uint256 currentFlashloanVersion;
+    uint256 opTotal;
+    uint256 opCnt;
+
+    address WALLET_ADDRESS;
+    // bool testNet;
+
+    //stable: 1, variable: 2
+    uint256 borrowMode;
+
+    struct op {
+        uint256 typeCode;
+        uint256 amount;
+        uint256 version;
+    }
+
+    uint256 FLASHLOAN = 1;
+    uint256 FLASHLOAN_REPAY = 2;
+
+    uint256 DEPOSIT = 3;
+    uint256 BORROW = 4;
+    uint256 REPAY = 5;
+    uint256 WITHDRAW = 6;
+
+    uint256 RETURN_FUNDS = 7;
+    uint256 ADD_FUNDS = 8;
+
+
+    mapping ( uint256 => op ) opMap;
+
+    constructor(address _PoolAddressProvider, address _LendingPoolAddressProvider) {
+
+        i_PoolAddressProvider = IPoolAddressesProvider(_PoolAddressProvider);
+        PoolAddress = i_PoolAddressProvider.getPool();
+        Pool = IPool(PoolAddress);
+
+        i_LendingPoolAddressProvider = ILendingPoolAddressesProvider(_LendingPoolAddressProvider);
+        LendingPoolAddress = i_LendingPoolAddressProvider.getLendingPool();
+        LendingPool = ILendingPool(LendingPoolAddress);
+
+        // WALLET_ADDRESS = msg.sender;
+    }
+
+    function executeBot(
+        uint256[] calldata _typeArray,
+        uint256[] calldata _amtArray,
+        uint256[] calldata _versionArray
+    ) public onlyOwner {
+        
+        WALLET_ADDRESS = msg.sender;
+
+        opTotal = _typeArray.length; //count of operations
+
+        op memory newOp;
+        
+        for (uint i = 0; i < opTotal; i++) {
+            newOp.typeCode = _typeArray[i];
+            newOp.amount = _amtArray[i];
+            newOp.version = _versionArray[i];
+            opMap[i] = newOp;
+        }
+
+        opCnt = 0;
+        
+        while(opCnt < opTotal) {
+            if (opMap[opCnt].typeCode == DEPOSIT) {
+                flashDeposit(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == BORROW) {
+                flashBorrow(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == REPAY) {
+                flashRepay(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == WITHDRAW) {
+                flashWithdraw(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == FLASHLOAN) {
+                flashloan(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == ADD_FUNDS) {
+                addFunds(opMap[opCnt].amount);
+            } else if(opMap[opCnt].typeCode == RETURN_FUNDS) {
+                returnFunds(opMap[opCnt].amount, opMap[opCnt].version);
+            }
+            opCnt++;
+        }
+        if (IERC20(assetAddress).balanceOf(address(this)) > 1) {
+            IERC20(assetAddress).transfer(WALLET_ADDRESS, IERC20(assetAddress).balanceOf(address(this)));
+        }
+        if (IERC20(amAssetAddress).balanceOf(address(this)) > 1) {
+            IERC20(amAssetAddress).transfer(WALLET_ADDRESS, IERC20(amAssetAddress).balanceOf(address(this)));
+        }
+        if (IERC20(aPolAssetAddress).balanceOf(address(this)) > 1) {
+            IERC20(aPolAssetAddress).transfer(WALLET_ADDRESS, IERC20(aPolAssetAddress).balanceOf(address(this)));
+        }
+    }
+
+    function executeOperation(
+        address[] calldata _assets,
+        uint256[] calldata _amounts,
+        uint256[] calldata _premiums,
+        address _initiator,
+        bytes memory _params
+    ) external returns (bool)
+    {
+        console.log("hello");
+
+        while(true) {
+            opCnt++;
+            if (opMap[opCnt].typeCode == DEPOSIT) {
+                flashDeposit(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == BORROW) {
+                flashBorrow(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == REPAY) {
+                flashRepay(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == WITHDRAW) {
+                flashWithdraw(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == FLASHLOAN) {
+                flashloan(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == ADD_FUNDS) {
+                addFunds(opMap[opCnt].amount);
+            } else if(opMap[opCnt].typeCode == RETURN_FUNDS) {
+                returnFunds(opMap[opCnt].amount, opMap[opCnt].version);
+            } else if(opMap[opCnt].typeCode == FLASHLOAN_REPAY) {
+                break;
+            }
+        }
+
+        address currentPoolAddress;
+
+        if (keccak256(_params) == keccak256(bytes('2'))){
+            currentPoolAddress = LendingPoolAddress;
+        } else {
+            currentPoolAddress = PoolAddress;
+        }
+        
+        // Approve the LendingPool contract allowance to *pull* the owed amount
+        for (uint i = 0; i < _assets.length; i++) {
+            uint amountOwing = _amounts[i].add(_premiums[i]);
+            IERC20(_assets[i]).approve(address(currentPoolAddress), amountOwing);
+        }
+        
+        return true;
+    }
+
+    function flashloan(
+        uint256 _amount,
+        uint256 _version
+    ) public {
+        
+        address receiverAddress = address(this);
+
+        // the various assets to be flashed
+        address[] memory assets = new address[](1);
+        assets[0] = assetAddress;
+
+        // the amount to be flashed for each asset
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = _amount;
+        
+        // 0 = no debt, 1 = stable, 2 = variable
+        uint256[] memory modes = new uint256[](1);
+        modes[0] = 0;
+        
+        address onBehalfOf = address(this);
+        // bytes memory params;
+        uint16 referralCode = 0;
+
+        if (_version == 2){
+            LendingPool.flashLoan(
+                receiverAddress,
+                assets,
+                amounts,
+                modes,
+                onBehalfOf,
+                bytes('2'), //version
+                referralCode
+            );
+        } else {
+            Pool.flashLoan(
+                receiverAddress,
+                assets,
+                amounts,
+                modes,
+                onBehalfOf,
+                bytes('3'), //version
+                referralCode
+            );
+        }
+    }
+    /*
+    * Deposits the flashed AAVE, DAI and LINK liquidity onto the lending pool as collateral
+    */
+    function flashDeposit(uint256 _amount, uint256 _version) public {
+        if(_version == 2){
+            IERC20(assetAddress).approve(LendingPoolAddress, _amount);
+            LendingPool.deposit(assetAddress, _amount, address(this), uint16(0));
+        } else {
+            IERC20(assetAddress).approve(PoolAddress, _amount);
+            Pool.deposit(assetAddress, _amount, address(this), uint16(0));
+        }
+    }
+
+    /*
+    * Withdraws the AAVE, DAI and LINK collateral from the lending pool
+    */
+    function flashWithdraw(uint256 _withdrawAmount, uint256 _version) public {
+        if(_version == 2)
+        {
+            LendingPool.withdraw(assetAddress, _withdrawAmount, WALLET_ADDRESS);
+        } else {
+            Pool.withdraw(assetAddress, _withdrawAmount, WALLET_ADDRESS);
+        }
+    }
+
+    /*
+    * Return amUSDC to the wallet from the contract
+    */
+    function returnFunds(uint256 _returnAmount, uint256 _version) public {
+        if(_version == 2) {
+            IERC20(amAssetAddress).transfer(WALLET_ADDRESS, _returnAmount);
+        }else {
+            IERC20(aPolAssetAddress).transfer(WALLET_ADDRESS, _returnAmount);
+        }
+    }
+
+    /*
+    * Add USDC to the contract from the wallet
+    */
+    function addFunds(uint256 _addAmount) public {
+        IERC20(assetAddress).transferFrom(WALLET_ADDRESS, address(this), _addAmount);
+    }
+    
+    /*
+    * Borrows _borrowAmt amount of _borrowAsset based on the existing deposited collateral
+    */
+    function flashBorrow(uint256 _borrowAmt, uint256 _version) public {
+        // borrowing x asset at stable rate, no referral, for yourself
+        if(_version == 2) {
+            LendingPool.borrow(
+                assetAddress, 
+                _borrowAmt, 
+                borrowMode, 
+                uint16(0), 
+                WALLET_ADDRESS
+            );
+        } else {
+            Pool.borrow(
+                assetAddress, 
+                _borrowAmt, 
+                borrowMode, 
+                uint16(0), 
+                WALLET_ADDRESS
+            );
+        }    
+    }
+
+    /*
+    * Repays _repayAmt amount of _repayAsset
+    */
+    function flashRepay(uint256 _repayAmt, uint256 _version) public {
+        
+        // approve the repayment from this contract
+        if (_version == 2) {
+            IERC20(assetAddress).approve(LendingPoolAddress, _repayAmt);        
+            LendingPool.repay(
+                assetAddress, 
+                _repayAmt, 
+                borrowMode, 
+                WALLET_ADDRESS
+            );
+        } else {
+            IERC20(assetAddress).approve(PoolAddress, _repayAmt);
+            Pool.repay(
+                assetAddress, 
+                _repayAmt, 
+                borrowMode, 
+                WALLET_ADDRESS
+            );
+        }
+        
+    }
+
+    function setVersion (uint256 _version) internal{
+        currentFlashloanVersion = _version;
+    }
+    function setAsset (address _assetAddress, address _amAssetAddress, address _aPolAssetAddress) public {
+        assetAddress = _assetAddress;
+        amAssetAddress = _amAssetAddress;
+        aPolAssetAddress = _aPolAssetAddress;
+    }
+    function setBorrowMode (uint256 _borrowMode) public {
+        borrowMode = _borrowMode;
+    }
+    function getFlashLoanPremium() public view returns (uint256 [] memory){
+        uint256[] memory FlashloanPremiumFees = new uint256[](2);
+        FlashloanPremiumFees[0] = LendingPool.FLASHLOAN_PREMIUM_TOTAL();
+        FlashloanPremiumFees[1] = Pool.FLASHLOAN_PREMIUM_TOTAL();
+        return FlashloanPremiumFees;
+    }
+    function deposit(uint256 _amount) public {
+        IERC20(assetAddress).transferFrom(msg.sender, address(this), _amount);
+    }
+    function pullFunds() public onlyOwner {
+        //pull funds from the contract
+        if(address(this).balance > 1){
+            payable(msg.sender).transfer(address(this).balance);
+        }
+
+        if (IERC20(assetAddress).balanceOf(address(this)) > 1) {
+            IERC20(assetAddress).transfer(WALLET_ADDRESS, IERC20(assetAddress).balanceOf(address(this)));
+        }
+        if (IERC20(amAssetAddress).balanceOf(address(this)) > 1) {
+            IERC20(amAssetAddress).transfer(WALLET_ADDRESS, IERC20(amAssetAddress).balanceOf(address(this)));
+        }
+        if (IERC20(aPolAssetAddress).balanceOf(address(this)) > 1) {
+            IERC20(aPolAssetAddress).transfer(WALLET_ADDRESS, IERC20(aPolAssetAddress).balanceOf(address(this)));
+        }
+    }
+}
